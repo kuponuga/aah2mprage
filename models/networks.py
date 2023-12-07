@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
+from torchvision.models.vgg import vgg19 # HT
 
 
 ###############################################################################
@@ -64,7 +65,8 @@ def get_scheduler(optimizer, opt):
     return scheduler
 
 
-def init_weights(net, init_type='normal', init_gain=0.02):
+# def init_weights(net, init_type='normal', init_gain=0.02): # original
+def init_weights(net, init_type='normal', init_gain=0.02): # HT
     """Initialize network weights.
 
     Parameters:
@@ -213,7 +215,7 @@ class GANLoss(nn.Module):
     that has the same size as the input.
     """
 
-    def __init__(self, gan_mode, target_real_label=1.0, target_fake_label=0.0):
+    def __init__(self, gan_mode, target_real_label=0.9, target_fake_label=0.0): # HT
         """ Initialize the GANLoss class.
 
         Parameters:
@@ -613,3 +615,30 @@ class PixelDiscriminator(nn.Module):
     def forward(self, input):
         """Standard forward."""
         return self.net(input)
+
+
+# VGG 19 loss (from SRGAN) HT
+class VGG19Loss(nn.Module):
+    def __init__(self, loss_type):
+        super(VGG19Loss, self).__init__()
+        vgg = vgg19(pretrained=True)
+        if loss_type == 'vgg22':
+            vgg_net = nn.Sequential(*list(vgg.features[:9]))
+        elif loss_type == 'vgg54':
+            vgg_net = nn.Sequential(*list(vgg.features[:36]))
+        
+        for param in vgg_net.parameters():
+            param.requires_grad = False
+
+        self.vgg_net = vgg_net.eval()
+        self.mse_loss = nn.MSELoss()
+
+        self.register_buffer('vgg_mean', torch.tensor([0.485, 0.456, 0.406], requires_grad=False))
+        self.register_buffer('vgg_std', torch.tensor([0.229, 0.224, 0.225], requires_grad=False))
+
+    def forward(self, real_img, fake_img):
+        real_img = real_img.sub(self.vgg_mean[:, None, None]).div(self.vgg_std[:, None, None])
+        fake_img = fake_img.sub(self.vgg_mean[:, None, None]).div(self.vgg_std[:, None, None])
+        feature_real = self.vgg_net(real_img)
+        feature_fake = self.vgg_net(fake_img)
+        return self.mse_loss(feature_real, feature_fake)
